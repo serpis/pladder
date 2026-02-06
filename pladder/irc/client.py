@@ -45,6 +45,24 @@ class Hook(AbstractContextManager):
     def on_send_privmsg(self, timestamp, channel, sender, text):
         pass
 
+    def on_join(self, timestamp, channel, sender):
+        pass
+
+    def on_part(self, timestamp, channel, sender, reason):
+        pass
+
+    def on_quit(self, timestamp, sender, reason):
+        pass
+
+    def on_nick(self, timestamp, old_nick, new_nick, sender):
+        pass
+
+    def on_kick(self, timestamp, channel, kicker, kicked, reason, sender):
+        pass
+
+    def on_names_complete(self, timestamp, channel, nicks):
+        pass
+
 
 class Client(ExitStack):
     def __init__(self, config, inherited_fd=None):
@@ -196,6 +214,7 @@ class Client(ExitStack):
     def _handle_nick(self, message):
         old_nick = message.sender.nick
         new_nick, = message.params
+        timestamp = datetime.now(timezone.utc).timestamp()
         for channel in self._channels.values():
             if old_nick in channel.users:
                 channel.users.remove(old_nick)
@@ -205,10 +224,13 @@ class Client(ExitStack):
             raise Exception("TODO: Implement support for changing own nick")
         else:
             logger.info(f"User changed nick from {old_nick} to {new_nick}")
+        for hook in self._hooks:
+            hook.on_nick(timestamp, old_nick, new_nick, message.sender)
 
     def _handle_join(self, message):
         nick = message.sender.nick
         channel, = message.params
+        timestamp = datetime.now(timezone.utc).timestamp()
         if nick == self._config.nick:
             self._channels[channel] = Channel(set())
             logger.info(f"Joined channel {channel}")
@@ -216,9 +238,12 @@ class Client(ExitStack):
             if channel in self._channels:
                 self._channels[channel].users.add(nick)
             logger.info(f"User {nick} joined channel {channel}")
+        for hook in self._hooks:
+            hook.on_join(timestamp, channel, message.sender)
 
     def _handle_leave(self, message):
         nick = message.sender.nick
+        timestamp = datetime.now(timezone.utc).timestamp()
         if len(message.params) == 1:
             channel, reason = message.params + [""]
         elif len(message.params) == 2:
@@ -235,6 +260,8 @@ class Client(ExitStack):
                 if nick in users:
                     users.remove(nick)
             logger.info(f"User {nick} left channel {channel}: {reason}")
+        for hook in self._hooks:
+            hook.on_part(timestamp, channel, message.sender, reason)
 
     def _handle_invite(self, message):
         inviter = message.sender.nick
@@ -248,6 +275,7 @@ class Client(ExitStack):
 
     def _handle_quit(self, message):
         nick = message.sender.nick
+        timestamp = datetime.now(timezone.utc).timestamp()
         if len(message.params) == 0:
             reason = ""
         elif len(message.params) == 1:
@@ -262,9 +290,12 @@ class Client(ExitStack):
                 if nick in channel.users:
                     channel.users.remove(nick)
             logger.info(f"User {nick} quit from server: {reason}")
+        for hook in self._hooks:
+            hook.on_quit(timestamp, message.sender, reason)
 
     def _handle_kick(self, message):
         kicker = message.sender.nick
+        timestamp = datetime.now(timezone.utc).timestamp()
         if len(message.params) == 2:
             channel, kicked, reason = message.params + [""]
         elif len(message.params) == 3:
@@ -281,6 +312,8 @@ class Client(ExitStack):
                 if kicked in users:
                     users.remove(kicked)
             logger.info(f"User {kicker} kicked user {kicked} from channel {channel}: {reason}")
+        for hook in self._hooks:
+            hook.on_kick(timestamp, channel, kicker, kicked, reason, message.sender)
 
     def _handle_names_reply(self, message):
         _, _, channel, nicks_string = message.params
@@ -296,10 +329,13 @@ class Client(ExitStack):
     def _handle_end_of_names_reply(self, message):
         channel = message.params[1]
         users = self._get_partial_users(channel)
+        timestamp = datetime.now(timezone.utc).timestamp()
         if channel in self._channels:
             self._channels[channel] = self._channels[channel]._replace(users=users)
         self._clear_partial_users(channel)
         logger.info(f"Channel {channel} users: " + ', '.join(sorted(users)))
+        for hook in self._hooks:
+            hook.on_names_complete(timestamp, channel, sorted(users))
 
     # The "phases" of connecting: the active part of the client
 
